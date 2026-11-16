@@ -10,10 +10,12 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Float64
 
 
+# Normalize angle to [-pi, pi]
 def wrap_angle(angle):
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
+# Limit value to the specified maximum magnitude
 def limit(value, maximum):
     return max(-maximum, min(maximum, value))
 
@@ -23,10 +25,13 @@ class GoalController(Node):
     def __init__(self):
         super().__init__('goal_controller')
 
+        # Publish velocity commands and subscribe to odometry feedback
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.subscriber = self.create_subscription(
             Odometry, '/odom', self.odom_callback, 10
         )
+
+        # Run the controller at 10 Hz
         self.timer = self.create_timer(0.1, self.control)
 
         self.position = None
@@ -35,7 +40,7 @@ class GoalController(Node):
         self.circle = None
         self.running = True
 
-        # Publishers for controller errors
+        # Publish tracking errors for monitoring and evaluation
         self.position_error_pub = self.create_publisher(
             Float64, '/position_error', 10
         )
@@ -61,7 +66,7 @@ class GoalController(Node):
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
 
-        # Convert quaternion to yaw angle
+        # Convert quaternion orientation to yaw angle
         theta = math.atan2(
             2.0 * (q.w * q.z + q.x * q.y),
             1.0 - 2.0 * (q.y * q.y + q.z * q.z)
@@ -100,7 +105,7 @@ class GoalController(Node):
         c = math.cos(theta)
         s = math.sin(theta)
 
-        # Square corners relative to current position
+        # Define square waypoints relative to the robot's current pose
         self.waypoints = [
             (x + side*c, y + side*s, None),
             (x + side*c - side*s, y + side*s + side*c, None),
@@ -122,7 +127,7 @@ class GoalController(Node):
 
         x, y, theta = self.position
 
-        # Circle center to the left of the robot
+        # Place the circle center to the left of the robot
         cx = x - radius * math.sin(theta)
         cy = y + radius * math.cos(theta)
 
@@ -140,7 +145,7 @@ class GoalController(Node):
         x, y, theta = self.position
         cmd = Twist()
 
-        # Calculate and publish goal errors
+        # Calculate position and heading errors for the active goal
         if self.goal is not None:
             gx, gy, gtheta = self.goal
 
@@ -170,11 +175,11 @@ class GoalController(Node):
                     self.orientation_error_pub, orientation_error
                 )
 
-        # Continuously follow a circle
+        # Circle tracking using a moving lookahead target
         if self.circle is not None:
             cx, cy, radius = self.circle
 
-            # Signed radial path error
+            # Signed radial distance from the desired circle
             path_error = math.hypot(x - cx, y - cy) - radius
 
             self.publish_error(
@@ -191,6 +196,7 @@ class GoalController(Node):
             desired = math.atan2(gy - y, gx - x)
             error = wrap_angle(desired - theta)
 
+            # Proportional velocity control with speed limits
             cmd.linear.x = min(0.15, 0.8 * distance)
             cmd.linear.x *= max(0.0, math.cos(error))
             cmd.angular.z = limit(2.0 * error, 1.0)
@@ -208,12 +214,12 @@ class GoalController(Node):
         dy = gy - y
         distance = math.hypot(dx, dy)
 
-        # Move to target position
+        # First move to the target position
         if distance > 0.07:
             desired = math.atan2(dy, dx)
             error = wrap_angle(desired - theta)
 
-            # Rotate first if heading error is large
+            # Rotate in place when the heading error is large
             if abs(error) > 0.35:
                 cmd.linear.x = 0.0
             else:
@@ -221,7 +227,7 @@ class GoalController(Node):
 
             cmd.angular.z = limit(1.5 * error, 1.0)
 
-        # Rotate to target orientation
+        # Then adjust the final orientation if required
         elif gtheta is not None:
             error = wrap_angle(gtheta - theta)
 
@@ -302,9 +308,11 @@ def keyboard(node):
 
 
 def main():
+    # Handle Ctrl+C manually to stop the robot before ROS shutdown
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = GoalController()
 
+    # Read commands in a separate thread while ROS processes callbacks
     thread = threading.Thread(
         target=keyboard,
         args=(node,),
