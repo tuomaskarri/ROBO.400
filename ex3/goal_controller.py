@@ -7,6 +7,7 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float64
 
 
 def wrap_angle(angle):
@@ -33,6 +34,28 @@ class GoalController(Node):
         self.waypoints = []
         self.circle = None
         self.running = True
+
+        # Publishers for controller errors
+        self.position_error_pub = self.create_publisher(
+            Float64, '/position_error', 10
+        )
+
+        self.heading_error_pub = self.create_publisher(
+            Float64, '/heading_error', 10
+        )
+
+        self.orientation_error_pub = self.create_publisher(
+            Float64, '/orientation_error', 10
+        )
+
+        self.path_error_pub = self.create_publisher(
+            Float64, '/path_error', 10
+        )
+
+    def publish_error(self, publisher, value):
+        msg = Float64()
+        msg.data = float(value)
+        publisher.publish(msg)
 
     def odom_callback(self, msg):
         p = msg.pose.pose.position
@@ -117,9 +140,46 @@ class GoalController(Node):
         x, y, theta = self.position
         cmd = Twist()
 
+        # Calculate and publish goal errors
+        if self.goal is not None:
+            gx, gy, gtheta = self.goal
+
+            dx = gx - x
+            dy = gy - y
+
+            position_error = math.hypot(dx, dy)
+
+            if position_error > 0.07:
+                desired_heading = math.atan2(dy, dx)
+                heading_error = wrap_angle(desired_heading - theta)
+            else:
+                heading_error = 0.0
+
+            self.publish_error(
+                self.position_error_pub, position_error
+            )
+
+            self.publish_error(
+                self.heading_error_pub, heading_error
+            )
+
+            if gtheta is not None:
+                orientation_error = wrap_angle(gtheta - theta)
+
+                self.publish_error(
+                    self.orientation_error_pub, orientation_error
+                )
+
         # Continuously follow a circle
         if self.circle is not None:
             cx, cy, radius = self.circle
+
+            # Signed radial path error
+            path_error = math.hypot(x - cx, y - cy) - radius
+
+            self.publish_error(
+                self.path_error_pub, path_error
+            )
 
             phi = math.atan2(y - cy, x - cx)
             lookahead = 0.4
@@ -148,12 +208,12 @@ class GoalController(Node):
         dy = gy - y
         distance = math.hypot(dx, dy)
 
-        # Move to the target position
+        # Move to target position
         if distance > 0.07:
             desired = math.atan2(dy, dx)
             error = wrap_angle(desired - theta)
 
-            # Rotate first if the heading error is large
+            # Rotate first if heading error is large
             if abs(error) > 0.35:
                 cmd.linear.x = 0.0
             else:
@@ -212,7 +272,9 @@ def keyboard(node):
 
             elif command == 'pose' and len(parts) == 4:
                 angle = math.radians(float(parts[3]))
-                node.set_goal(float(parts[1]), float(parts[2]), angle)
+                node.set_goal(
+                    float(parts[1]), float(parts[2]), angle
+                )
 
             elif command == 'square':
                 side = float(parts[1]) if len(parts) > 1 else 1.0
@@ -243,14 +305,20 @@ def main():
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = GoalController()
 
-    thread = threading.Thread(target=keyboard, args=(node,), daemon=True)
+    thread = threading.Thread(
+        target=keyboard,
+        args=(node,),
+        daemon=True
+    )
     thread.start()
 
     try:
         while node.running:
             rclpy.spin_once(node, timeout_sec=0.1)
+
     except KeyboardInterrupt:
         pass
+
     finally:
         node.stop()
         node.destroy_node()
