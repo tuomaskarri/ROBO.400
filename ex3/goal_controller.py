@@ -51,11 +51,22 @@ class GoalController(Node):
         self.waypoints = []
         self.circle = None
         self.publisher.publish(Twist())
+        self.get_logger().info("Robot stopped")
 
     def set_goal(self, x, y, theta=None):
         self.goal = (x, y, theta)
         self.waypoints = []
         self.circle = None
+
+        if theta is None:
+            self.get_logger().info(
+                f"New point goal: x={x:.2f}, y={y:.2f}"
+            )
+        else:
+            self.get_logger().info(
+                f"New pose goal: x={x:.2f}, y={y:.2f}, "
+                f"theta={math.degrees(theta):.1f} deg"
+            )
 
     def set_square(self, side=1.0):
         if self.position is None:
@@ -77,6 +88,10 @@ class GoalController(Node):
         self.goal = self.waypoints.pop(0)
         self.circle = None
 
+        self.get_logger().info(
+            f"Starting square path, side={side:.2f} m"
+        )
+
     def set_circle(self, radius=1.0):
         if self.position is None:
             print("Waiting for odometry")
@@ -90,6 +105,10 @@ class GoalController(Node):
 
         self.stop()
         self.circle = (cx, cy, radius)
+
+        self.get_logger().info(
+            f"Starting circle path, radius={radius:.2f} m"
+        )
 
     def control(self):
         if self.position is None:
@@ -158,10 +177,15 @@ class GoalController(Node):
 
     def goal_reached(self):
         if self.waypoints:
+            self.get_logger().info("Waypoint reached")
             self.goal = self.waypoints.pop(0)
-            print("Next waypoint:", self.goal)
+            self.get_logger().info(
+                f"Next waypoint: {self.goal}"
+            )
         else:
-            print("Goal reached")
+            self.get_logger().info(
+                "Goal reached successfully"
+            )
             self.goal = None
 
 
